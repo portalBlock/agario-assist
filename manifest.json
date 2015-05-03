@@ -1,0 +1,12 @@
+{
+    "manifest_version": 2,
+    "name": "Agario Assist",
+    "description": "A collection of tools to make Agario easier",
+    "version": "0.0.1",
+    "content_scripts": [{
+        "matches": ["http://agar.io/"],
+        "js": ["injector.js"],
+        "run_at": "document_end"
+    }],
+    "web_accessible_resources": ["hijack.js", "override.js"]
+}
