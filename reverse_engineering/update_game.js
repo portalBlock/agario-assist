@@ -33,8 +33,7 @@ js = run("curl", ["http://agar.io/main_out.js"], {stdio: ["pipe","pipe","ignore"
 signature = hash(js)
 js = beautify(js)
 save("game.raw.js", js)
-*/
-js = load("game.raw.js").toString()
+/*/js = load("game.raw.js").toString()
 
 // Abort de-obfuscation if we detect the dev uploaded non-minified code
 if (~js.indexOf("DOUBLE_BUFFER")) {
@@ -112,6 +111,7 @@ var parsed_dsl = {
   CallExpression: [],
   ConditionalExpression: [],
   LogicalExpression: [],
+  Function: [],
 };
 var generators = {
   AssignmentExpression: function (node) { return [
@@ -126,15 +126,28 @@ var generators = {
     node.operator,
     node.right.type !== "Literal" ? generate(node.right) : false
   ]},
+  Function: function (node) {
+    var n = _.cloneDeep(node)
+    walk(n, function (f) { f.type = "EmptyStatement" })
+    var parts = [n.body].concat(node.params)
+    if (n.id) parts.push(n.id)
+    parts = parts.map(function (node) { return generate(node) })
+    parts[0] = parts[0].slice(2,-3).trim() // Remove braces and final ;
+    return parts
+  },
 }
+parsed_dsl.FunctionExpression = parsed_dsl.FunctionDeclaration = parsed_dsl.Function
+generators.FunctionExpression = generators.FunctionDeclaration = generators.Function
 
 walk(dsl, {
-  AssignmentExpression: function (node, state) { parsed_dsl[node.type].push(generators[node.type](node)) },
-  ConditionalExpression: function (node, state) { parsed_dsl[node.type].push(generators[node.type](node)) },
+  Function: function (node, state) { parsed_dsl[node.type].push(generators[node.type](node)) },
+  AssignmentExpression: function (node, state) { if(!_.intersection(_.pluck(state, "type"), ["FunctionExpression", "FunctionDeclaration"]).length) parsed_dsl[node.type].push(generators[node.type](node)) },
+  ConditionalExpression: function (node, state) { if(!_.intersection(_.pluck(state, "type"), ["FunctionExpression", "FunctionDeclaration"]).length) parsed_dsl[node.type].push(generators[node.type](node)) },
   // Restrict the following to top level only to make the DSL more explicit
   CallExpression: function (node, state) { if (state.length === 3) parsed_dsl[node.type].push(generators[node.type](node)) },
   LogicalExpression: function (node, state) { if (state.length === 3) parsed_dsl[node.type].push(generators[node.type](node)) },
 })
+//console.log(parsed_dsl)
 
 do {
   found = 0
@@ -143,6 +156,7 @@ do {
     CallExpression: findAndReplace,
     ConditionalExpression: findAndReplace,
     LogicalExpression: findAndReplace,
+    Function: functionFindAndReplace,
   })
 } while (found)
 
@@ -151,15 +165,33 @@ walk(ast, { VariableDeclaration: hoistVars })
 js = generate(ast)
 js = beautify(js)
 save("game.js", js)
+
+// Update the mapping
+js = load("../mapping.js")
+ast = parse(js);
+(function (M, k, v) {
+  var i
+  for (i = 0; i < M.length; i++) {
+    if (M[i].key.value === k) break
+  }
+  M.splice(i, 1, {
+    type: "Property",
+    kind: "init",
+    key: {type: "Literal", value: k},
+    value: parse("_=" + JSON.stringify(v)).body[0].expression.right,
+  })
+})(ast.body[0].expression.arguments[0].properties, signature, MAPPING)
+js = generate(ast)
+js = beautify(js)
+save("../mapping.js", js)
 console.log(MAPPING)
 
 // Extremely basic string hasher
 // http://stackoverflow.com/questions/7616461/generate-a-hash-from-string-in-javascript-jquery
 function hash(str) {
-    var hash = 0, len = str.length, i = 0
-    if (!len) return hash
-    for (; i < len; ++i) hash = hash * 31 + str.charCodeAt(i) | 0
-    return hash
+    for (var hash = 0, len = str.length, i = 0; i < len; ++i)
+      hash = hash * 31 + str.charCodeAt(i) | 0
+    return hash >>> 0
 }
 
 // Emulate python's array zip
@@ -423,7 +455,7 @@ function saveVarsToScope(node, state) {
 // Then replaces the bad variable
 // Handles self-referential expressions (e.g. `x = x + y` -> `z = z + y`)
 function findAndReplace(node, state) {
-  var diffIndex, comp, parts
+  var comp, parts, c, func
   parts = generators[node.type](node)
   for (var i = 0; i < parsed_dsl[node.type].length; i++) {
     comp = parsed_dsl[node.type][i]
@@ -434,15 +466,34 @@ function findAndReplace(node, state) {
       if (parts[j] === false) continue
       if (~parts[j].indexOf(".")) continue
 
-      var c = _.cloneDeep(node)
+      c = _.cloneDeep(node)
       walk(c, { Identifier: function (node, state) { if (node.name === parts[j]) node.name = comp[j] }})
       if (_.isEqual(comp, generators[node.type](c))) {
-        var func = getScope(parts[j], state)
+        func = getScope(parts[j], state)
         if (!func) console.log(state, parts[j], comp[j])
         replaceVar(func, parts[j], comp[j])
         return
       }
     }
+  }
+}
+
+// Special case function definitions
+function functionFindAndReplace(node, state) {
+  var comp, parts, func
+  parts = generators[node.type](node)
+  for (var i = 0; i < parsed_dsl[node.type].length; i++) {
+    comp = parsed_dsl[node.type][i]
+    if (parts.length != comp.length) continue
+    if (!~parts[0].indexOf(comp[0])) continue
+
+    for (var j = 1; j < parts.length; j++) {
+      if (parts[j] === comp[j]) continue
+      func = getScope(parts[j], state)
+      if (!func) console.log(state, parts[j], comp[j])
+      replaceVar(func, parts[j], comp[j])
+    }
+    return
   }
 }
 

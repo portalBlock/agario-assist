@@ -1,3 +1,6 @@
+// Wrap everything in a try catch so that things continue working if we get lucky
+try {
+
 // Scroll to change zoom  (down = zoom out, up = zoom in)
 calculateZoom = function () {};
 zoom = 1;
@@ -7,8 +10,8 @@ document.addEventListener("mousewheel", function (e) { zoom *= 1 + e.wheelDelta 
 var randColor = function () { return "#" + ("000000" + Math.floor(Math.random() * 0x1000000).toString(16)).slice(-6); };
 Cell.prototype.draw = (function (original) {
   return function () {
-    var mySize = Math.min.apply(null, myCells.map(function (x) { return x.size; })); // Size of the smallest piece of us
-    if (this.isVirus || myCells.length === 0) {
+    var mySize = 100;//Math.min.apply(null, myCells.map(function (x) { return x.size; })); // Size of the smallest piece of us
+    if (this.isVirus) {//} || myCells.length === 0) {
       this.color = "#666666"; // Viruses are always gray, and everything is gray when dead
     } else if (~myCells.indexOf(this)) {
       this.color = "#0000FF"; // Cells we own are blue
@@ -27,3 +30,8 @@ Cell.prototype.draw = (function (original) {
 
 // Finally, start the whole process
 init();
+
+} catch (e) {
+  // Something went wrong... let's just make sure the game loads
+  ORIGINAL_LOAD();
+}
